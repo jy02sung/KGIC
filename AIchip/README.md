@@ -26,7 +26,8 @@ Xilinx **Ultra96-v2 (PYNQ)** 보드의 DPU에서 YOLOv3-tiny 차선검출 모델
 
 | 파일 | 설명 |
 |------|------|
-| `SoC_Driving_v2.ipynb` | **메인 주행 노트북** (보드에서 실행) |
+| `SoC_Driving_v2.ipynb` | 기존 메인 주행 노트북 (640×480 캡처, 실측 결과 센서 중앙 크롭이라 화각이 좁음) |
+| `SoC_Driving_v3.ipynb` | **화각 확대 버전** (1920×1080 캡처 + 비율유지 BEV + BEV 캘리브레이션 확인 셀). 모터/ADC/폐루프 로직은 v2와 동일, 최초 실행 시 반드시 BEV 캘리브레이션 확인 셀로 `SRC_RATIO` 점검 필요 |
 | `SoC_Driving_v2_blackbox.ipynb` | 주행 노트북 + 플라이트 레코더(블랙박스). 매 프레임의 인식/판단/제어 상태를 보드 디스크에 기록 |
 | `replay_viewer.html` | 블랙박스 로그 오프라인 분석 뷰어. `run_*` 폴더를 열면 프레임 영상 + 동기화 차트 + 자동 진단 배지 표시 |
 | `data_collection.ipynb` | 수동주행(WASD) 데이터 수집. 하드웨어 계층의 ground truth |

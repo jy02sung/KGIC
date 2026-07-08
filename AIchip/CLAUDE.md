@@ -44,8 +44,11 @@ Xilinx **Ultra96-v2 (PYNQ)** 보드의 DPU로 YOLOv3-tiny 차선검출을 돌려
 - 정식 참조: `driving/image_processor.py` (SKKU AutomationLab). 파이프라인: `BEV → ROI(cutting_idx=300) → resize 256 → DPU`.
 - BEV 좌표(640×480 기준): src=[[238,316],[402,313],[501,476],[155,476]], dst=[[w·0.3,0],[w·0.7,0],[w·0.7,h],[w·0.3,h]].
 - 각도규약 함정: `calculate_angle`는 정면차선 = 90° 반환. bang-bang은 sign만 씀.
+- **카메라 화각 실측 결과 (2026-07-08, `test_camera_resolution_mode.py` 보드 실측)**: 카메라 센서는 1920×1080 네이티브. `cap.set(CAP_PROP_FRAME_WIDTH/HEIGHT, 640, 480)`을 걸면 짜부(비율 무시 리사이즈)가 아니라 **센서 중앙을 크롭**해서 640×480을 내려준다(합성 CROP 가설과의 diff=2.99 vs SQUISH 가설과의 diff=36.67, 10배 이상 차이로 CROP 확정). 즉 현재 파이프라인은 센서가 담을 수 있는 화각의 가운데 좁은 영역만 보고 있고 양옆은 애초에 캡처되지 않는다. 화각을 넓히려면 `cap.set()`을 640×480이 아니라 더 큰 해상도(예: 1920×1080, 1280×720)로 요청한 뒤, 그 결과를 정사각형으로 맞추는 단계를 직접 처리해야 한다(`test_fov_pipeline.py`로 squish/uniform 두 방식 비교 가능 — uniform 축소+재보정 쪽이 각도 왜곡이 적어 권장). 이 경우 기존 `src_mat`/`REF_X`는 640×480 크롭 화면 기준이라 새 캡처 크기에 맞게 재보정 필요.
 
 **작동 버전**: `SoC_Driving_v2.ipynb` = data_collection 하드웨어 + 캐노니컬 BEV 비전 + vision_to_target(차선중심→±20). 튜닝노브: STEER_DIR(±1), STEER_GAIN, DRIVE_SPEED(15), REF_X(128). 첫 테스트는 바퀴 띄우고.
+
+**v3 (화각 확대, 2026-07-08 작성, 보드 미검증)**: `SoC_Driving_v3.ipynb` = v2와 모터/ADC/폐루프 동일 + 카메라 캡처 CAPTURE_W/H(기본 1920×1080)로 확대 + BEV를 절대좌표 대신 SRC_RATIO/CUTTING_RATIO 비율로 재구현(비율유지 축소 후 적용, squish 아님). SRC_RATIO 초기값은 v2의 640×480 크롭 기준 보정값을 그대로 비율화한 근사치라 실제 검증 안 됨 — ImageProcessor 셀 다음에 추가된 "BEV 캘리브레이션 확인" 셀로 사다리꼴이 실제 차선과 맞는지 반드시 먼저 확인할 것.
 
 ## Working in This Directory
 
