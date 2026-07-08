@@ -48,6 +48,8 @@ Xilinx **Ultra96-v2 (PYNQ)** 보드의 DPU로 YOLOv3-tiny 차선검출을 돌려
 
 **작동 버전**: `SoC_Driving_v2.ipynb` = data_collection 하드웨어 + 캐노니컬 BEV 비전 + vision_to_target(차선중심→±20). 튜닝노브: STEER_DIR(±1), STEER_GAIN, DRIVE_SPEED(15), REF_X(128). 첫 테스트는 바퀴 띄우고.
 
+**v3 (화각 확대, 2026-07-08 작성, 보드 미검증)**: `SoC_Driving_v3.ipynb` = v2와 모터/ADC/폐루프 동일 + 카메라 캡처 CAPTURE_W/H(기본 1920×1080)로 확대 + BEV를 절대좌표 대신 SRC_RATIO/CUTTING_RATIO 비율로 재구현(비율유지 축소 후 적용, squish 아님). SRC_RATIO 초기값은 v2의 640×480 크롭 기준 보정값을 그대로 비율화한 근사치라 실제 검증 안 됨 — ImageProcessor 셀 다음에 추가된 "BEV 캘리브레이션 확인" 셀로 사다리꼴이 실제 차선과 맞는지 반드시 먼저 확인할 것.
+
 ## Working in This Directory
 
 Claude can help with:
