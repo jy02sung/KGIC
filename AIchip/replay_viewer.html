@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>주행 블랙박스 리플레이</title>
+<style>
+  :root {
+    --bg: #14171c; --panel: #1d2128; --line: #2c323c;
+    --fg: #e6e9ef; --dim: #8b93a1;
+    --c-center: #ffcc4d; --c-target: #4dabff; --c-mapped: #ff6b6b; --c-steer: #7ee787;
+    --c-left: #4dabff; --c-right: #ff6b6b; --c-stay: #555c68;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "Apple SD Gothic Neo", sans-serif; padding: 16px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .sub { color: var(--dim); font-size: 12px; margin-bottom: 12px; }
+  #dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 28px; text-align: center; color: var(--dim); margin-bottom: 14px; cursor: pointer; }
+  #dropzone.small { padding: 8px; font-size: 12px; }
+  #main { display: none; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  #framePanel { flex: 0 0 auto; }
+  #frameImg { width: 384px; height: 384px; image-rendering: pixelated; background: #000; border-radius: 6px; display: block; }
+  #noFrame { width: 384px; height: 384px; display: none; align-items: center; justify-content: center; color: var(--dim); background:#000; border-radius:6px; }
+  #valuesPanel { flex: 1 1 300px; min-width: 280px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { padding: 3px 6px; border-bottom: 1px solid var(--line); }
+  td.k { color: var(--dim); white-space: nowrap; }
+  td.v { font-family: "SF Mono", Menlo, monospace; text-align: right; }
+  .layer { font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-right: 6px; }
+  .l-percep { background: #3a2f10; color: var(--c-center); }
+  .l-decide { background: #10283a; color: var(--c-target); }
+  .l-ctrl   { background: #3a1414; color: var(--c-mapped); }
+  #badges { margin-top: 8px; min-height: 24px; }
+  .badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 10px; margin: 2px 4px 2px 0; }
+  .b-warn { background: #4a1d1d; color: #ff9c9c; }
+  .b-ok { background: #1d3a24; color: #7ee787; }
+  #controls { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px; flex-wrap: wrap; }
+  button, select { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer; }
+  button:hover { border-color: var(--dim); }
+  #slider { flex: 1; min-width: 200px; accent-color: var(--c-target); }
+  #frameLabel { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--dim); white-space: nowrap; }
+  .chartWrap { margin-top: 10px; }
+  .chartTitle { font-size: 12px; color: var(--dim); margin-bottom: 2px; }
+  .chartTitle b { font-weight: 600; }
+  canvas.chart { width: 100%; height: 110px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; }
+  canvas#cmdChart { height: 46px; }
+  .legend { font-size: 11px; color: var(--dim); }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 3px 0 10px; vertical-align: middle; }
+  kbd { background: var(--line); border-radius: 3px; padding: 0 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+<h1>주행 블랙박스 리플레이</h1>
+<div class="sub">보드에서 가져온 <code>run_*</code> 폴더(telemetry.jsonl + frames/)를 선택하거나 드래그해서 놓기.
+단축키: <kbd>Space</kbd> 재생/정지 · <kbd>←</kbd><kbd>→</kbd> 1프레임 · <kbd>Shift+←→</kbd> 10프레임</div>
+
+<div id="dropzone">📂 클릭해서 run_* 폴더 선택 (또는 폴더를 여기로 드래그)</div>
+<input type="file" id="dirInput" webkitdirectory multiple style="display:none">
+
+<div id="main">
+  <div class="row">
+    <div class="panel" id="framePanel">
+      <img id="frameImg" alt="frame">
+      <div id="noFrame">이 프레임의 이미지 없음 (드롭됨)</div>
+    </div>
+    <div class="panel" id="valuesPanel">
+      <table>
+        <tr><td class="k"><span class="layer l-percep">인식</span>center (차선중심 x)</td><td class="v" id="v_center">–</td></tr>
+        <tr><td class="k"><span class="layer l-percep">인식</span>angle (도, 0=직진)</td><td class="v" id="v_angle">–</td></tr>
+        <tr><td class="k"><span class="layer l-percep">인식</span>YOLO 박스 수 / 최고 score</td><td class="v" id="v_yolo">–</td></tr>
+        <tr><td class="k"><span class="layer l-percep">인식</span>DPU 추론 시간</td><td class="v" id="v_exec">–</td></tr>
+        <tr><td class="k"><span class="layer l-decide">판단</span>steer (목표, 트림 전)</td><td class="v" id="v_steer">–</td></tr>
+        <tr><td class="k"><span class="layer l-decide">판단</span>target (트림 포함)</td><td class="v" id="v_target">–</td></tr>
+        <tr><td class="k"><span class="layer l-ctrl">제어</span>mapped (실제 바퀴 위치)</td><td class="v" id="v_mapped">–</td></tr>
+        <tr><td class="k"><span class="layer l-ctrl">제어</span>err = target − mapped</td><td class="v" id="v_err">–</td></tr>
+        <tr><td class="k"><span class="layer l-ctrl">제어</span>ADC 원시값</td><td class="v" id="v_adc">–</td></tr>
+        <tr><td class="k"><span class="layer l-ctrl">제어</span>조향 명령</td><td class="v" id="v_cmd">–</td></tr>
+        <tr><td class="k">프레임 간격 (카메라 루프)</td><td class="v" id="v_dt">–</td></tr>
+      </table>
+      <div id="badges"></div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="playBtn">▶ 재생</button>
+    <select id="speedSel">
+      <option value="0.25">0.25×</option>
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1× (실시간)</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+    </select>
+    <input type="range" id="slider" min="0" max="0" value="0">
+    <span id="frameLabel">– / –</span>
+  </div>
+
+  <div class="chartWrap">
+    <div class="chartTitle"><b>인식</b> — center(px)
+      <span class="legend"><span class="sw" style="background:var(--c-center)"></span>center
+      <span class="sw" style="background:#666"></span>REF_X=200 · 빈 구간 = 미검출</span></div>
+    <canvas class="chart" id="centerChart"></canvas>
+  </div>
+  <div class="chartWrap">
+    <div class="chartTitle"><b>판단 vs 제어</b> — 조향 스케일(±20)
+      <span class="legend"><span class="sw" style="background:var(--c-target)"></span>target(트림포함)
+      <span class="sw" style="background:var(--c-mapped)"></span>mapped(바퀴)
+      <span class="sw" style="background:var(--c-steer)"></span>steer(트림 전)</span></div>
+    <canvas class="chart" id="steerChart"></canvas>
+  </div>
+  <div class="chartWrap">
+    <div class="chartTitle"><b>제어 명령</b>
+      <span class="legend"><span class="sw" style="background:var(--c-left)"></span>left
+      <span class="sw" style="background:var(--c-stay)"></span>stay
+      <span class="sw" style="background:var(--c-right)"></span>right</span></div>
+    <canvas class="chart" id="cmdChart"></canvas>
+  </div>
+</div>
+
+<script>
+"use strict";
+const REF_X = 200;
+let data = [];          // telemetry records
+let fileMap = new Map();// relative path -> File
+let idx = 0;
+let playing = false;
+let playTimer = null;
+let curURL = null;
+
+const $ = id => document.getElementById(id);
+const drop = $("dropzone"), input = $("dirInput");
+
+drop.addEventListener("click", () => input.click());
+drop.addEventListener("dragover", e => { e.preventDefault(); });
+drop.addEventListener("drop", async e => {
+  e.preventDefault();
+  const files = [];
+  const walkers = [...e.dataTransfer.items].map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean).map(en => walk(en, "", files));
+  await Promise.all(walkers);
+  loadFiles(files);
+});
+async function walk(entry, prefix, out) {
+  if (entry.isFile) {
+    const f = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ path: prefix + f.name, file: f });
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    let batch;
+    do {
+      batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      await Promise.all(batch.map(en => walk(en, prefix + entry.name + "/", out)));
+    } while (batch.length);
+  }
+}
+input.addEventListener("change", () => {
+  loadFiles([...input.files].map(f => ({ path: f.webkitRelativePath || f.name, file: f })));
+});
+
+async function loadFiles(entries) {
+  fileMap = new Map();
+  let telemFile = null;
+  for (const { path, file } of entries) {
+    // run 폴더 내부 상대경로로 정규화 (마지막 "frames/xxx.jpg" 또는 파일명)
+    const parts = path.split("/");
+    const fi = parts.indexOf("frames");
+    const rel = fi >= 0 ? "frames/" + parts.slice(fi + 1).join("/") : parts[parts.length - 1];
+    fileMap.set(rel, file);
+    if (parts[parts.length - 1] === "telemetry.jsonl") telemFile = file;
+  }
+  if (!telemFile) { alert("telemetry.jsonl 을 찾지 못했어요. run_* 폴더를 선택했는지 확인하세요."); return; }
+  const text = await telemFile.text();
+  data = text.split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
+  data.sort((a, b) => a.i - b.i);
+  if (!data.length) { alert("telemetry.jsonl 이 비어 있어요."); return; }
+
+  $("main").style.display = "block";
+  drop.classList.add("small");
+  drop.textContent = `📂 ${data.length}개 프레임 로드됨 — 다른 run 폴더를 열려면 클릭`;
+  $("slider").max = data.length - 1;
+  sizeCharts();
+  drawAllCharts();
+  seek(0);
+}
+
+// ---------- 프레임 표시 ----------
+function seek(i) {
+  idx = Math.max(0, Math.min(data.length - 1, i));
+  $("slider").value = idx;
+  const d = data[idx];
+
+  const img = $("frameImg"), no = $("noFrame");
+  const f = d.frame_file && fileMap.get(d.frame_file);
+  if (f) {
+    if (curURL) URL.revokeObjectURL(curURL);
+    curURL = URL.createObjectURL(f);
+    img.src = curURL;
+    img.style.display = "block"; no.style.display = "none";
+  } else {
+    img.style.display = "none"; no.style.display = "flex";
+  }
+
+  const t0 = data[0].t;
+  $("frameLabel").textContent = `#${d.i}  t=+${(d.t - t0).toFixed(2)}s  (${idx + 1}/${data.length})`;
+  const fmt = (v, d2 = 2) => v == null ? "미검출" : (+v).toFixed(d2);
+  $("v_center").textContent = d.center == null ? "미검출" : d.center;
+  $("v_angle").textContent = d.angle == null ? "–" : fmt(d.angle) + "°";
+  $("v_yolo").textContent = (d.boxes ? d.boxes.length : 0) + " / " + (d.scores && d.scores.length ? Math.max(...d.scores).toFixed(3) : "–");
+  $("v_exec").textContent = d.exec_ms != null ? d.exec_ms + " ms" : "–";
+  $("v_steer").textContent = fmt(d.steer);
+  $("v_target").textContent = fmt(d.target);
+  $("v_mapped").textContent = fmt(d.mapped);
+  const err = d.target - d.mapped;
+  $("v_err").textContent = (err >= 0 ? "+" : "") + err.toFixed(2);
+  $("v_adc").textContent = d.adc != null ? d.adc : "–";
+  $("v_cmd").textContent = d.cmd || "–";
+  const dt = idx > 0 ? (d.t - data[idx - 1].t) * 1000 : null;
+  $("v_dt").textContent = dt == null ? "–" : dt.toFixed(0) + " ms (" + (1000 / dt).toFixed(1) + " FPS)";
+
+  renderBadges(d, dt, err);
+  drawPlayheads();
+}
+
+// ---------- 자동 진단 배지: 어느 레이어가 수상한지 힌트 ----------
+function renderBadges(d, dt, err) {
+  const out = [];
+  if (d.center == null) out.push(["b-warn", "인식: 차선 미검출"]);
+  if (idx > 0 && d.center != null && data[idx - 1].center != null && Math.abs(d.center - data[idx - 1].center) > 30)
+    out.push(["b-warn", `인식: center 점프 ${data[idx - 1].center}→${d.center}`]);
+  if (Math.abs(err) > 5) {
+    // 오차가 큰데 줄어드는 중인지: 5프레임 전과 비교
+    const p = data[Math.max(0, idx - 5)];
+    const prevErr = Math.abs(p.target - p.mapped);
+    if (Math.abs(err) >= prevErr) out.push(["b-warn", `제어: 오차 ${err.toFixed(1)} 미수렴 (바퀴가 목표를 못 따라감)`]);
+    else out.push(["b-ok", `제어: 오차 ${err.toFixed(1)} 수렴 중`]);
+  }
+  if (dt != null && dt > 400) out.push(["b-warn", `루프: 프레임 간격 ${dt.toFixed(0)}ms (비전 루프 지연)`]);
+  if (!out.length) out.push(["b-ok", "이 프레임 정상 범위"]);
+  $("badges").innerHTML = out.map(([c, t]) => `<span class="badge ${c}">${t}</span>`).join("");
+}
+
+// ---------- 차트 ----------
+const charts = [
+  { id: "centerChart", draw: drawCenter },
+  { id: "steerChart", draw: drawSteer },
+  { id: "cmdChart",   draw: drawCmd },
+];
+function sizeCharts() {
+  for (const c of charts) {
+    const cv = $(c.id), r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+    cv.width = r.width * dpr; cv.height = r.height * dpr;
+    cv.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+    cv._w = r.width; cv._h = r.height;
+  }
+}
+const xOf = (cv, i) => 8 + (cv._w - 16) * (data.length <= 1 ? 0 : i / (data.length - 1));
+const iOf = (cv, x) => Math.round((x - 8) / (cv._w - 16) * (data.length - 1));
+
+function line(ctx, cv, get, yMap, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
+  let pen = false;
+  for (let i = 0; i < data.length; i++) {
+    const v = get(data[i]);
+    if (v == null) { pen = false; continue; }
+    const x = xOf(cv, i), y = yMap(v);
+    pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    pen = true;
+  }
+  ctx.stroke();
+}
+function drawCenter() {
+  const cv = $("centerChart"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv._w, cv._h);
+  const y = v => cv._h - 8 - (cv._h - 16) * (v / 256);
+  ctx.strokeStyle = "#666"; ctx.setLineDash([4, 4]); ctx.beginPath();
+  ctx.moveTo(8, y(REF_X)); ctx.lineTo(cv._w - 8, y(REF_X)); ctx.stroke(); ctx.setLineDash([]);
+  // 미검출 구간 표시
+  ctx.fillStyle = "rgba(255,107,107,0.12)";
+  for (let i = 0; i < data.length; i++)
+    if (data[i].center == null) ctx.fillRect(xOf(cv, i) - 1, 0, 2, cv._h);
+  line(ctx, cv, d => d.center, y, getCSS("--c-center"));
+  cv._playY = null;
+}
+function drawSteer() {
+  const cv = $("steerChart"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv._w, cv._h);
+  const y = v => cv._h / 2 - (cv._h - 16) / 2 * (v / 22);
+  ctx.strokeStyle = "#3a4250"; ctx.beginPath();
+  ctx.moveTo(8, y(0)); ctx.lineTo(cv._w - 8, y(0)); ctx.stroke();
+  line(ctx, cv, d => d.steer, y, getCSS("--c-steer"));
+  line(ctx, cv, d => d.target, y, getCSS("--c-target"));
+  line(ctx, cv, d => d.mapped, y, getCSS("--c-mapped"));
+}
+function drawCmd() {
+  const cv = $("cmdChart"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv._w, cv._h);
+  const colors = { left: getCSS("--c-left"), right: getCSS("--c-right"), stay: getCSS("--c-stay") };
+  const bw = Math.max(1, (cv._w - 16) / Math.max(1, data.length - 1));
+  for (let i = 0; i < data.length; i++) {
+    ctx.fillStyle = colors[data[i].cmd] || "#333";
+    ctx.fillRect(xOf(cv, i) - bw / 2, 8, bw + 0.5, cv._h - 16);
+  }
+}
+function getCSS(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function drawAllCharts() { for (const c of charts) c.draw(); }
+function drawPlayheads() {
+  drawAllCharts();
+  for (const c of charts) {
+    const cv = $(c.id), ctx = cv.getContext("2d");
+    const x = xOf(cv, idx);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cv._h); ctx.stroke();
+  }
+}
+// 차트 클릭/드래그로 탐색
+for (const c of charts) {
+  const cv = $(c.id);
+  let down = false;
+  cv.addEventListener("mousedown", e => { down = true; seekFromMouse(cv, e); });
+  cv.addEventListener("mousemove", e => { if (down) seekFromMouse(cv, e); });
+  addEventListener("mouseup", () => down = false);
+}
+function seekFromMouse(cv, e) {
+  const r = cv.getBoundingClientRect();
+  pause(); seek(iOf(cv, e.clientX - r.left));
+}
+
+// ---------- 재생 ----------
+$("slider").addEventListener("input", e => { pause(); seek(+e.target.value); });
+$("playBtn").addEventListener("click", () => playing ? pause() : play());
+function play() {
+  if (idx >= data.length - 1) idx = 0;
+  playing = true; $("playBtn").textContent = "⏸ 정지";
+  step();
+}
+function step() {
+  if (!playing) return;
+  if (idx >= data.length - 1) { pause(); return; }
+  const speed = +$("speedSel").value;
+  const dt = Math.min(1000, Math.max(15, (data[idx + 1].t - data[idx].t) * 1000)) / speed;
+  playTimer = setTimeout(() => { seek(idx + 1); step(); }, dt);
+}
+function pause() { playing = false; clearTimeout(playTimer); $("playBtn").textContent = "▶ 재생"; }
+
+addEventListener("keydown", e => {
+  if (!data.length) return;
+  if (e.code === "Space") { e.preventDefault(); playing ? pause() : play(); }
+  else if (e.key === "ArrowRight") { pause(); seek(idx + (e.shiftKey ? 10 : 1)); }
+  else if (e.key === "ArrowLeft") { pause(); seek(idx - (e.shiftKey ? 10 : 1)); }
+});
+addEventListener("resize", () => { if (data.length) { sizeCharts(); drawPlayheads(); } });
+</script>
+</body>
+</html>
