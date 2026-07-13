@@ -1,25 +1,55 @@
-# Copyright (c) 2024 Sungkyunkwan University AutomationLab
-#
-# Authors:
-# - Gyuhyeon Hwang <rbgus7080@g.skku.edu>, Hobin Oh <hobin0676@daum.net>, Minkwan Choi <arbong97@naver.com>, Hyeonjin Sim <nufxwms@naver.com>
-# - url: https://micro.skku.ac.kr/micro/index.do
-
 import numpy as np
 
+
+BASE_DIR = "/home/xilinx/jupyter_notebooks/KGIC"
+DPU_BIT_PATH = f"{BASE_DIR}/driveCode/dpu/dpu.bit"
+MODEL_PATH = f"{BASE_DIR}/modelCode/tiny-yolov3_256.xmodel"
+CLASSES_PATH = f"{BASE_DIR}/modelCode/configs/lane_class.txt"
+
 MOTOR_ADDRESSES = {
-    'motor_0': 0x00A0000000,
-    'motor_1': 0x00A0010000,
-    'motor_2': 0x00A0020000,
-    'motor_3': 0x00A0030000,
-    'motor_4': 0x00A0040000,
-    'motor_5': 0x00A0050000
+    "motor_0": 0x00A0000000,
+    "motor_1": 0x00A0010000,
+    "motor_2": 0x00A0020000,
+    "motor_3": 0x00A0030000,
+    "motor_4": 0x00A0040000,
+    "motor_5": 0x00A0050000,
 }
-
 ADDRESS_RANGE = 0x10000
+PWM_SIZE = 600600
 
-# YOLO configurations
-anchor_list = [10, 14, 23, 27, 37, 58, 81, 82, 135, 169, 344, 319]
-anchors = np.array(anchor_list).reshape(-1, 2)
-classes_path = "../xmodel/lane_class.txt"
+# Final track tuning.
+DRIVE_SPEED = 100
+STEER_KP = 0.026
+STEER_KD = 0.035
+STEER_MIN_DUTY = 0.52
+STEER_MAX_DUTY = 0.80
+STEER_DEADZONE = 1.2
+STEER_D_FILTER = 0.35
+STEER_TRIM = -5.5
+STEER_DIR = +1
+STEER_GAIN = 60.0 / 128.0
+REF_X = 185
+CENTER_EMA = 1.0
+CONTROL_HZ = 100
+LOST_HOLD_FRAMES = 5
 
+CAPTURE_W = 1920
+CAPTURE_H = 1080
+BEV_WORK_HEIGHT = 480
+SRC_RATIO = [(238 / 640, 316 / 480), (402 / 640, 313 / 480),
+             (501 / 640, 476 / 480), (155 / 640, 476 / 480)]
+CUTTING_RATIO = 300 / 480
 
+YOLO_THRESHOLD = 0.01
+LANE_MAX_SHIFT = 25
+USE_COLOR_FILTER = False
+LANE_MAX_SATURATION = 40
+
+DISPLAY_ENABLE = False
+HEARTBEAT_EVERY = 30
+MANUAL_DRIVE_SPEED = 100
+MANUAL_STEER_TARGET = 20.0
+
+ANCHORS = np.array(
+    [10, 14, 23, 27, 37, 58, 81, 82, 135, 169, 344, 319]
+).reshape(-1, 2)

@@ -1,151 +1,106 @@
-# Copyright (c) 2024 Sungkyunkwan University AutomationLab
-#
-# Authors:
-# - Gyuhyeon Hwang <rbgus7080@g.skku.edu>, Hobin Oh <hobin0676@daum.net>, Minkwan Choi <arbong97@naver.com>, Hyeonjin Sim <nufxwms@naver.com>
-# - url: https://micro.skku.ac.kr/micro/index.do
+import math
+import time
 
 import cv2
 import numpy as np
-import math
-import os
-import colorsys
-import random
-from PIL import Image
-import time
-from yolo_utils import pre_process, evaluate
+
+from config import (
+    BEV_WORK_HEIGHT, CUTTING_RATIO, LANE_MAX_SATURATION, LANE_MAX_SHIFT,
+    SRC_RATIO, USE_COLOR_FILTER, YOLO_THRESHOLD,
+)
+from yolo_utils import evaluate, pre_process
+
 
 class ImageProcessor:
     def __init__(self, dpu, classes_path, anchors):
-        # 클래스 변수로 저장
+        with open(classes_path, encoding="utf-8") as class_file:
+            self.class_names = [name.strip() for name in class_file if name.strip()]
         self.dpu = dpu
-            
-        self.classes_path = classes_path
         self.anchors = anchors
-        self.class_names = self.load_classes(classes_path)    
-        
-        self.reference_point_x = 200
         self.reference_point_y = 240
         self.point_detection_height = 20
-        
-        # DPU 초기화 상태 추적 플래그
-        self.initialized = False
-        self.init_dpu()
-        
-    def load_classes(self, classes_path):
-        """Load class names from the given path"""
-        with open(classes_path, 'r') as f:
-            class_names = f.read().strip().split('\n')
-        return class_names 
-    
-    def init_dpu(self):
-        """DPU 초기화 - 한 번만 실행됨"""
-        if self.initialized:
-            print("DPU 이미 초기화됨")
-            return  # 이미 초기화되었으면 바로 리턴
+        self.last_lane_center = None
+        self.last_exec_ms = 0.0
+        self._init_dpu_buffers()
 
-        print("DPU 초기화 중...")
-        inputTensors = self.dpu.get_input_tensors()
-        outputTensors = self.dpu.get_output_tensors()
-
-        self.shapeIn = tuple(inputTensors[0].dims)
-        self.shapeOut0 = tuple(outputTensors[0].dims)
-        self.shapeOut1 = tuple(outputTensors[1].dims)
-
-        outputSize0 = int(outputTensors[0].get_data_size() / self.shapeIn[0])
-        outputSize1 = int(outputTensors[1].get_data_size() / self.shapeIn[0])
-
-        self.input_data = [np.empty(self.shapeIn, dtype=np.float32, order="C")]
+    def _init_dpu_buffers(self):
+        input_tensors = self.dpu.get_input_tensors()
+        output_tensors = self.dpu.get_output_tensors()
+        self.shape_in = tuple(input_tensors[0].dims)
+        self.shape_out0 = tuple(output_tensors[0].dims)
+        self.shape_out1 = tuple(output_tensors[1].dims)
+        self.input_data = [np.empty(self.shape_in, dtype=np.float32, order="C")]
         self.output_data = [
-            np.empty(self.shapeOut0, dtype=np.float32, order="C"),
-            np.empty(self.shapeOut1, dtype=np.float32, order="C")
+            np.empty(self.shape_out0, dtype=np.float32, order="C"),
+            np.empty(self.shape_out1, dtype=np.float32, order="C"),
         ]
 
-        # 초기화 완료 플래그 설정
-        self.initialized = True
-        print("DPU 초기화 완료")
+    @staticmethod
+    def _bird_convert(image, source, destination):
+        matrix = cv2.getPerspectiveTransform(np.float32(source), np.float32(destination))
+        return cv2.warpPerspective(image, matrix, (image.shape[1], image.shape[0]))
 
-    
-    def roi_rectangle_below(self, img, cutting_idx):
-        return img[cutting_idx:, :]
+    @staticmethod
+    def _calculate_angle(x1, y1, x2, y2):
+        return math.degrees(math.atan2(x2 - x1, y1 - y2))
 
-    def warpping(self, image, srcmat, dstmat):
-        h, w = image.shape[0], image.shape[1]
-        transform_matrix = cv2.getPerspectiveTransform(srcmat, dstmat)
-        minv = cv2.getPerspectiveTransform(dstmat, srcmat)
-        _image = cv2.warpPerspective(image, transform_matrix, (w, h))
-        return _image, minv
-    
-    def bird_convert(self, img, srcmat, dstmat):
-        srcmat = np.float32(srcmat)
-        dstmat = np.float32(dstmat)
-        img_warpped, _ = self.warpping(img, srcmat, dstmat)
-        return img_warpped
+    def _is_lane_colored(self, image, box):
+        if not USE_COLOR_FILTER:
+            return True
+        y1, x1, y2, x2 = [int(value) for value in box]
+        height, width = image.shape[:2]
+        y1, y2 = max(0, y1), min(height, y2)
+        x1, x2 = max(0, x1), min(width, x2)
+        if y2 <= y1 or x2 <= x1:
+            return True
+        saturation = cv2.cvtColor(image[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)[:, :, 1].mean()
+        return float(saturation) <= LANE_MAX_SATURATION
 
-    def calculate_angle(self, x1, y1, x2, y2):
-        if x1 == x2:
-            return 90.0
-        slope = (y2 - y1) / (x2 - x1)
-        return -math.degrees(math.atan(slope))
+    def _detect_lane_center(self, boxes, image):
+        candidates = []
+        for box in boxes:
+            if not self._is_lane_colored(image, box):
+                continue
+            _, x1, _, x2 = box
+            candidates.append((box, (int(x1) + int(x2)) // 2))
+        if not candidates:
+            return None
+        if self.last_lane_center is not None:
+            nearby = [item for item in candidates if abs(item[1] - self.last_lane_center) <= LANE_MAX_SHIFT]
+            if not nearby:
+                return None
+            return min(nearby, key=lambda item: abs(item[1] - self.last_lane_center))[1]
+        return max(candidates, key=lambda item: item[0][1])[1]
 
-    def detect_lane_center_x(self, xyxy_results):
-        rightmost_lane_x_min = None
-        rightmost_lane_x_max = None
-        rightmost_x_position = -float('inf')
-        
-        for box in xyxy_results:
-            y1, x1, y2, x2 = box
-            if x1 > rightmost_x_position:
-                rightmost_x_position = x1
-                rightmost_lane_x_min = int(x1)
-                rightmost_lane_x_max = int(x2)
-        
-        if rightmost_lane_x_min is not None and rightmost_lane_x_max is not None:
-            return (rightmost_lane_x_min + rightmost_lane_x_max) // 2
-        return None
+    @staticmethod
+    def _bev_geometry(frame):
+        height, width = frame.shape[:2]
+        work_width = round(width * BEV_WORK_HEIGHT / height)
+        work = cv2.resize(frame, (work_width, BEV_WORK_HEIGHT))
+        source = [[round(x * work_width), round(y * BEV_WORK_HEIGHT)] for x, y in SRC_RATIO]
+        destination = [
+            [round(work_width * 0.3), 0], [round(work_width * 0.7), 0],
+            [round(work_width * 0.7), BEV_WORK_HEIGHT], [round(work_width * 0.3), BEV_WORK_HEIGHT],
+        ]
+        return work, source, destination, round(BEV_WORK_HEIGHT * CUTTING_RATIO)
 
-    def process_frame(self, img):
-
-        
-        h, w = img.shape[0], img.shape[1]
-        dst_mat = [[round(w * 0.3), 0], [round(w * 0.7), 0], 
-                  [round(w * 0.7), h], [round(w * 0.3), h]]
-        src_mat = [[238, 316], [402, 313], [501, 476], [155, 476]]
-        
-        bird_img = self.bird_convert(img, srcmat=src_mat, dstmat=dst_mat)
-        roi_image = self.roi_rectangle_below(bird_img, cutting_idx=300)
-        
-        img = cv2.resize(roi_image, (256, 256))
-        image_size = img.shape[:2]
-        image_data = np.array(pre_process(img, (256, 256)), dtype=np.float32)
-        
-        start_time = time.time()
-
-        # self를 사용하여 클래스 변수에 접근
-        self.input_data[0][...] = image_data.reshape(self.shapeIn[1:])
+    def process_frame(self, frame):
+        work, source, destination, cutting_index = self._bev_geometry(frame)
+        bird = self._bird_convert(work, source, destination)
+        resized = cv2.resize(bird[cutting_index:, :], (256, 256))
+        image_data = pre_process(resized, (256, 256)).astype(np.float32)
+        self.input_data[0][...] = image_data.reshape(self.shape_in[1:])
+        start = time.time()
         job_id = self.dpu.execute_async(self.input_data, self.output_data)
         self.dpu.wait(job_id)
-        end_time = time.time()
-        
-        conv_out0 = np.reshape(self.output_data[0], self.shapeOut0)
-        conv_out1 = np.reshape(self.output_data[1], self.shapeOut1)
-        yolo_outputs = [conv_out0, conv_out1]
-
-        boxes, scores, classes = evaluate(yolo_outputs, image_size, self.class_names, self.anchors)
-
-        for i, box in enumerate(boxes):
-            top_left = (int(box[1]), int(box[0]))
-            bottom_right = (int(box[3]), int(box[2]))
-            #cv2.rectangle(img, top_left, bottom_right, (0, 255, 0), 2)
-
-        right_lane_center = self.detect_lane_center_x(boxes)
-        
-        ######### 예외처리 알고리즘 #########
-        if right_lane_center is None:
-            print("차선 중심을 찾을 수 없습니다.")
-            right_lane_angle = 90
-            return right_lane_angle, img
-        ###################################
-
-        right_lane_angle = self.calculate_angle(self.reference_point_x, self.reference_point_y, right_lane_center, self.point_detection_height)
-        
-        return right_lane_angle, img
+        self.last_exec_ms = (time.time() - start) * 1000.0
+        outputs = [
+            np.reshape(self.output_data[0], self.shape_out0),
+            np.reshape(self.output_data[1], self.shape_out1),
+        ]
+        boxes, _, _ = evaluate(outputs, resized.shape[:2], self.class_names, self.anchors, YOLO_THRESHOLD)
+        center = self._detect_lane_center(boxes, resized)
+        self.last_lane_center = center
+        if center is None:
+            return None
+        return int(center)

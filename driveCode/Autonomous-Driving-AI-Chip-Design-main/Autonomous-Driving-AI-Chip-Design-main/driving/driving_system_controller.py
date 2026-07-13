@@ -1,192 +1,137 @@
-# Copyright (c) 2024 Sungkyunkwan University AutomationLab
-#
-# Authors:
-# - Gyuhyeon Hwang <rbgus7080@g.skku.edu>, Hobin Oh <hobin0676@daum.net>, Minkwan Choi <arbong97@naver.com>, Hyeonjin Sim <nufxwms@naver.com>
-# - url: https://micro.skku.ac.kr/micro/index.do
+import threading
+import time
 
 import cv2
-import time
 import keyboard
-from threading import Lock
+import numpy as np
 
-from image_processor import ImageProcessor
-from motor_controller import MotorController
-from config import classes_path, anchors 
-
+from config import (
+    CAPTURE_H, CAPTURE_W, CENTER_EMA, CONTROL_HZ, DRIVE_SPEED, HEARTBEAT_EVERY,
+    LOST_HOLD_FRAMES, MANUAL_DRIVE_SPEED, MANUAL_STEER_TARGET, REF_X, STEER_DIR,
+    STEER_GAIN,
+)
 
 
 class DrivingSystemController:
-    def __init__(self, dpu_overlay, dpu, motors, speed, steering_speed):
-        """
-        자율주행 차량 시스템 초기화
-        Args:
-            dpu_overlay: DPU 오버레이 객체
-        """
-        self.image_processor = ImageProcessor(dpu, classes_path, anchors)
-        self.motor_controller = MotorController(motors)
-        self.overlay = dpu_overlay
-        
-        # 제어 상태 변수
-        self.is_running = False
-        self.control_lock = Lock()
-        self.control_mode = 1  # 1: Autonomous, 2: Manual
-        
-        self.speed = speed
-        self.steering_speed = steering_speed
-        
-        # 시스템 초기화
-        self.init_system()
-        
-    def init_system(self):
-        """시스템 초기화"""
-        self.motor_controller.init_motors()
+    """Board-only autonomous/manual runner controlled by a USB wireless keyboard."""
 
-    def start_driving(self):
-        """주행 시작"""
-        with self.control_lock:
-            self.is_running = True
-            print("주행을 시작합니다.")
-            if self.control_mode == 1:
-                # 자율주행 모드 초기 설정
-                self.motor_controller.left_speed = self.speed
-                self.motor_controller.right_speed = self.speed
-                self.motor_controller.steering_speed = self.steering_speed
-            else:
-                # 수동 주행 모드 초기 설정
-                self.motor_controller.manual_speed = 0
-                self.motor_controller.manual_steering_angle = 0
+    def __init__(self, image_processor, motor_controller):
+        self.image_processor = image_processor
+        self.motor_controller = motor_controller
+        self.mode = "auto"
+        self.running = False
+        self.stop_requested = False
+        self._center_ema = None
+        self._last_steering = 0.0
+        self._lost_frames = 0
+        self._last_key_state = {}
+        self._control_thread = threading.Thread(target=self._control_loop, daemon=True)
 
-    def stop_driving(self):
-        """주행 정지"""
-        with self.control_lock:
-            self.is_running = False
-            print("주행을 정지합니다.")
-            self.motor_controller.reset_motor_values()
+    def _control_loop(self):
+        period = 1.0 / CONTROL_HZ
+        while not self.stop_requested:
+            self.motor_controller.control_once()
+            time.sleep(period)
 
-    def switch_mode(self, new_mode):
-        """
-        주행 모드 전환
-        Args:
-            new_mode: 1(자율주행) 또는 2(수동주행)
-        """
-        if self.control_mode != new_mode:
-            self.control_mode = new_mode
-            self.is_running = False
-            self.motor_controller.reset_motor_values()
-            mode_str = "자율주행" if new_mode == 1 else "수동주행"
-            print(f"{mode_str} 모드로 전환되었습니다.")
-            print("Space 키를 눌러 주행을 시작하세요.")
+    def _pressed_once(self, key):
+        is_down = keyboard.is_pressed(key)
+        was_down = self._last_key_state.get(key, False)
+        self._last_key_state[key] = is_down
+        return is_down and not was_down
 
-    def process_and_control(self, frame):
-        """
-        프레임 처리 및 차량 제어
-        Args:
-            frame: 처리할 비디오 프레임
-        Returns:
-            처리된 이미지
-        """
-        if self.control_mode == 1:  # Autonomous mode
-            slope, image = self.image_processor.process_frame(frame)
-            if self.is_running:
-                self.motor_controller.control_motors(slope, control_mode=1)
-            return image
-        else:  # Manual mode
-            if self.is_running:
-                self.motor_controller.handle_manual_control()
-            return frame
+    @staticmethod
+    def _vision_to_target(center):
+        return float(np.clip(STEER_DIR * (center - REF_X) * STEER_GAIN, -20, 20))
 
-    def wait_for_mode_selection(self):
-        """시작 시 모드 선택 대기"""
-        print("\n주행 모드를 선택하세요:")
-        print("1: 자율주행 모드")
-        print("2: 수동주행 모드")
-        
-        while True:
-            if keyboard.is_pressed('1'):
-                self.switch_mode(1)
-                break
-            elif keyboard.is_pressed('2'):
-                self.switch_mode(2)
-                break
-            time.sleep(0.1)
+    def _set_stopped_command(self):
+        self.motor_controller.set_command(0, 0, 0)
 
-    def run(self, video_path=None, camera_index=0):
-        """
-        메인 실행 함수
-        Args:
-            video_path: 비디오 파일 경로 (선택)
-            camera_index: 카메라 인덱스 (기본값 0)
-        """
-        # 카메라 또는 비디오 초기화
-        if video_path:
-            cap = cv2.VideoCapture(video_path)
+    def _update_auto_command(self, center):
+        if center is None:
+            self._lost_frames += 1
+            if self._lost_frames > LOST_HOLD_FRAMES:
+                self._last_steering = 0.0
+                self._center_ema = None
         else:
-            cap = cv2.VideoCapture(camera_index)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self._lost_frames = 0
+            if self._center_ema is None:
+                self._center_ema = float(center)
+            else:
+                self._center_ema = CENTER_EMA * center + (1.0 - CENTER_EMA) * self._center_ema
+            self._last_steering = self._vision_to_target(self._center_ema)
+        self.motor_controller.set_command(DRIVE_SPEED, DRIVE_SPEED, self._last_steering)
 
+    def _update_manual_command(self):
+        if keyboard.is_pressed("w") and not keyboard.is_pressed("s"):
+            speed = MANUAL_DRIVE_SPEED
+        elif keyboard.is_pressed("s") and not keyboard.is_pressed("w"):
+            speed = -MANUAL_DRIVE_SPEED
+        else:
+            speed = 0
+        if keyboard.is_pressed("a") and not keyboard.is_pressed("d"):
+            steering = -MANUAL_STEER_TARGET
+        elif keyboard.is_pressed("d") and not keyboard.is_pressed("a"):
+            steering = MANUAL_STEER_TARGET
+        else:
+            steering = 0
+        self.motor_controller.set_command(speed, speed, steering)
+
+    def _handle_mode_keys(self):
+        if self._pressed_once("1"):
+            self.running = False
+            self.mode = "auto"
+            self._set_stopped_command()
+            print("Mode: autonomous")
+        if self._pressed_once("2"):
+            self.running = False
+            self.mode = "manual"
+            self._set_stopped_command()
+            print("Mode: manual")
+        if self._pressed_once("space"):
+            self.running = not self.running
+            if not self.running:
+                self._set_stopped_command()
+            print("Drive: {}".format("start" if self.running else "stop"))
+        if self._pressed_once("q"):
+            self.stop_requested = True
+
+    def run(self, camera_index=0):
+        cap = cv2.VideoCapture(camera_index)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_W)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_H)
         if not cap.isOpened():
-            print("카메라를 열 수 없습니다.")
-            return
-
-        # 시작 시 모드 선택
-        self.wait_for_mode_selection()
-
-        # 제어 안내 출력
-        print("\n키보드 제어 안내:")
-        print("Space: 주행 시작/정지")
-        print("1/2: 자율주행/수동주행 모드 전환")
-        if self.control_mode == 2:
-            print("\n수동 주행 제어:")
-            print("W/S: 전진/후진")
-            print("A/D: 좌회전/우회전")
-            print("R: 긴급 정지")
-        print("Q: 프로그램 종료\n")
-
+            raise RuntimeError("Camera could not be opened")
+        self._control_thread.start()
+        print("Keys: 1 auto, 2 manual, Space start/stop, W/A/S/D manual, Q quit")
+        frame_index = 0
         try:
-            while True:
-                # 키보드 입력 처리
-                if keyboard.is_pressed('space'):
-                    time.sleep(0.3)  # 디바운싱
-                    if self.is_running:
-                        self.stop_driving()
+            while not self.stop_requested:
+                self._handle_mode_keys()
+                if self.mode == "manual":
+                    if self.running:
+                        self._update_manual_command()
                     else:
-                        self.start_driving()
-                
-                elif keyboard.is_pressed('1') or keyboard.is_pressed('2'):
-                    prev_mode = self.control_mode
-                    new_mode = 1 if keyboard.is_pressed('1') else 2
-                    if prev_mode != new_mode:
-                        self.switch_mode(new_mode)
-                        if new_mode == 2:
-                            print("\n수동 주행 제어:")
-                            print("W/S: 전진/후진")
-                            print("A/D: 좌회전/우회전")
-                            print("R: 긴급 정지")
-                    time.sleep(0.3)  # 디바운싱
-                
-                if keyboard.is_pressed('q'):
-                    print("\n프로그램을 종료합니다.")
-                    break
+                        self._set_stopped_command()
+                    time.sleep(0.005)
+                    continue
 
-                # 프레임 처리
                 ret, frame = cap.read()
                 if not ret:
-                    print("프레임을 읽을 수 없습니다.")
-                    break
-
-                # 이미지 처리 및 차량 제어
-                processed_image = self.process_and_control(frame)
-                
-                # 상태 표시
-                mode_text = "모드: " + ("자율주행" if self.control_mode == 1 else "수동주행")
-                status_text = "상태: " + ("주행중" if self.is_running else "정지")
-                
-
-        except KeyboardInterrupt:
-            print("\n사용자에 의해 중지되었습니다.")
+                    raise RuntimeError("Camera frame read failed")
+                if self.running:
+                    center = self.image_processor.process_frame(frame)
+                    self._update_auto_command(center)
+                    if frame_index % HEARTBEAT_EVERY == 0:
+                        print("[AUTO] frame={} center={} lost={} steer={:+.1f} dpu={:.1f}ms".format(
+                            frame_index, center, self._lost_frames, self._last_steering,
+                            self.image_processor.last_exec_ms,
+                        ))
+                    frame_index += 1
+                else:
+                    self._set_stopped_command()
+                    time.sleep(0.01)
         finally:
-            # 리소스 정리
+            self.stop_requested = True
+            self._control_thread.join(timeout=1.0)
             cap.release()
-            cv2.destroyAllWindows()
-            self.stop_driving()
+            self.motor_controller.close()
