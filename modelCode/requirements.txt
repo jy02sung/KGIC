@@ -1,0 +1,6 @@
+MNN
+onnxruntime
+imgaug
+keras_applications
+pycocotools 
+bokeh
