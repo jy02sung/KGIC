@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 수집/전처리 데이터셋 (수백 MB — git으로 관리하지 않음)
+collected_data/
+Preprocessed_Dataset/
+
+# 주행 블랙박스 기록 (replay_viewer.html로 로컬 분석용)
+logs/
