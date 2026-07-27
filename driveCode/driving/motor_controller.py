@@ -18,10 +18,10 @@ class MotorController:
         self.left_speed = 0.0
         self.right_speed = 0.0
         self.steering_angle = 0.0
-        self.resistance_most_left = 1510
-        self.resistance_most_right = 915
-        #우측 915
-        #좌측 1510
+        self.resistance_most_left = 2597
+        self.resistance_most_right = 1939
+        #우측 1939
+        #좌측 2597
         self._previous_mapped = None
         self._velocity_ema = 0.0
         self._lock = threading.Lock()
