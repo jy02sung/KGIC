@@ -19,6 +19,10 @@
     매핑을 바꾼 뒤 라인을 끄고(RACING_LINE_ENABLE = False) 한 바퀴 돈 로그를 쓸 것.
     라인을 켠 채로 재면 라인이 바꾼 주행이 테이블에 섞여 들어간다.
 
+    STEER_TRIM도 같이 확인된다. 트랙 모델은 mapped - STEER_TRIM 을 적분하므로
+    트림이 틀어져 있으면 dpsi도 같이 틀어진다. 아래 '직선 평균' 출력이 0에서
+    멀면 STEER_TRIM부터 고칠 것.
+
 출력한 dpsi 열을 TRACK_CORNERS에 그대로 붙여넣으면 된다.
 """
 import json
@@ -57,6 +61,12 @@ def main(argv):
         print("⚠️  검출되지 않은 코너: %s" % ", ".join(missing))
         print("   코너 판정(CORNER_ENTER)이 매핑 변경으로 안 맞을 수 있습니다.")
         print("   |mapped|의 직선/코너 분포를 먼저 확인하세요.\n")
+
+    straight = [r["mapped"] for r in rows if r.get("seg", "").startswith("S")]
+    if straight:
+        drift = sum(straight) / len(straight)
+        flag = "" if abs(drift) < 1.0 else "   <-- STEER_TRIM을 이만큼 더해서 보정할 것"
+        print("직선 구간 mapped 평균: %+.2f  (0에 가까워야 정상)%s\n" % (drift, flag))
 
     print("코너   새 dpsi     이번 로그의 prog 도달   판정")
     for n in NAMES:
