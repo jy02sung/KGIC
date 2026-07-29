@@ -21,6 +21,7 @@ class ImageProcessor:
         self.point_detection_height = 20
         self.last_lane_center = None
         self.last_exec_ms = 0.0
+        self._fast_warp_cache = {}
         self._init_dpu_buffers()
 
     def _init_dpu_buffers(self):
@@ -84,10 +85,66 @@ class ImageProcessor:
         ]
         return work, source, destination, round(BEV_WORK_HEIGHT * CUTTING_RATIO)
 
-    def process_frame(self, frame):
-        work, source, destination, cutting_index = self._bev_geometry(frame)
-        bird = self._bird_convert(work, source, destination)
-        resized = cv2.resize(bird[cutting_index:, :], (256, 256))
+    def _fast_bev(self, frame, fastest=False):
+        """Notebook v15's composed BEV paths (fast or fastest)."""
+        source_height, source_width = frame.shape[:2]
+        mode = "fastest" if fastest else "fast"
+        key = (source_height, source_width, mode)
+        cached = self._fast_warp_cache.get(key)
+        if cached is None:
+            work_height = BEV_WORK_HEIGHT
+            work_width = round(source_width * work_height / source_height)
+            source = np.float32([
+                [round(x * work_width), round(y * work_height)] for x, y in SRC_RATIO
+            ])
+            destination = np.float32([
+                [round(work_width * 0.3), 0],
+                [round(work_width * 0.7), 0],
+                [round(work_width * 0.7), work_height],
+                [round(work_width * 0.3), work_height],
+            ])
+            cutting_index = round(work_height * CUTTING_RATIO)
+            bev = cv2.getPerspectiveTransform(source, destination)
+            roi = np.float32([
+                [256.0 / work_width, 0.0, 0.0],
+                [0.0, 256.0 / (work_height - cutting_index),
+                 -256.0 * cutting_index / (work_height - cutting_index)],
+                [0.0, 0.0, 1.0],
+            ])
+            matrix = roi.dot(bev)
+            if fastest:
+                source_to_work = np.float32([
+                    [work_width / source_width, 0.0, 0.0],
+                    [0.0, work_height / source_height, 0.0],
+                    [0.0, 0.0, 1.0],
+                ])
+                matrix = matrix.dot(source_to_work)
+            cached = (matrix.astype(np.float32), work_width, work_height)
+            self._fast_warp_cache[key] = cached
+
+        matrix, work_width, work_height = cached
+        if fastest:
+            source_image = frame
+        else:
+            source_image = cv2.resize(
+                frame, (work_width, work_height), interpolation=cv2.INTER_LINEAR
+            )
+        return cv2.warpPerspective(
+            source_image, matrix, (256, 256), flags=cv2.INTER_LINEAR
+        )
+
+    def process_frame(self, frame, bev_mode="legacy"):
+        if bev_mode == "fastest":
+            resized = self._fast_bev(frame, fastest=True)
+        elif bev_mode == "fast":
+            resized = self._fast_bev(frame, fastest=False)
+        elif bev_mode == "legacy":
+            # Kept as a diagnostic fallback for image-equivalence checks.
+            work, source, destination, cutting_index = self._bev_geometry(frame)
+            bird = self._bird_convert(work, source, destination)
+            resized = cv2.resize(bird[cutting_index:, :], (256, 256))
+        else:
+            raise ValueError("Unknown BEV mode: {}".format(bev_mode))
         image_data = pre_process(resized, (256, 256)).astype(np.float32)
         self.input_data[0][...] = image_data.reshape(self.shape_in[1:])
         start = time.time()

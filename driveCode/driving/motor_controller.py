@@ -4,8 +4,9 @@ import numpy as np
 import spidev
 
 from config import (
-    CONTROL_HZ, PWM_SIZE, STEER_D_FILTER, STEER_DEADZONE, STEER_KD, STEER_KP,
-    STEER_MAX_DUTY, STEER_MIN_DUTY, STEER_TRIM,
+    CONTROL_HZ, PWM_SIZE, RESISTANCE_MOST_LEFT, RESISTANCE_MOST_RIGHT,
+    STEER_D_FILTER, STEER_DEADZONE, STEER_KD, STEER_KP, STEER_MAX_DUTY,
+    STEER_MIN_DUTY, STEER_TRIM,
 )
 
 
@@ -18,10 +19,10 @@ class MotorController:
         self.left_speed = 0.0
         self.right_speed = 0.0
         self.steering_angle = 0.0
-        self.resistance_most_left = 1883
-        self.resistance_most_right = 1294
-        #우측 1294
-        #좌측 1883
+        self.resistance_most_left = RESISTANCE_MOST_LEFT
+        self.resistance_most_right = RESISTANCE_MOST_RIGHT
+        self.steer_trim = STEER_TRIM
+        self.steer_max_duty = STEER_MAX_DUTY
         self._previous_mapped = None
         self._velocity_ema = 0.0
         self._lock = threading.Lock()
@@ -80,7 +81,7 @@ class MotorController:
         duty = STEER_MIN_DUTY + STEER_KP * abs(error)
         if error * self._velocity_ema > 0:
             duty -= STEER_KD * abs(self._velocity_ema)
-        return float(np.clip(duty, STEER_MIN_DUTY, STEER_MAX_DUTY))
+        return float(np.clip(duty, STEER_MIN_DUTY, self.steer_max_duty))
 
     def _set_left_speed(self, speed):
         duty = int(self.size * abs(speed) / 100.0)
@@ -110,7 +111,7 @@ class MotorController:
         mapped = self.map_value(
             self.read_adc(), self.resistance_most_right, self.resistance_most_left, -20, 20
         )
-        error = steering_angle + STEER_TRIM - mapped
+        error = steering_angle + self.steer_trim - mapped
         if abs(error) < STEER_DEADZONE:
             self._stay()
             command, duty = "stay", 0.0
@@ -124,7 +125,14 @@ class MotorController:
                 command = "right"
         self._set_left_speed(left_speed)
         self._set_right_speed(right_speed)
-        return {"mapped": mapped, "target": steering_angle + STEER_TRIM, "error": error, "cmd": command, "duty": duty}
+        return {
+            "mapped": mapped,
+            "target": steering_angle + self.steer_trim,
+            "trim": self.steer_trim,
+            "error": error,
+            "cmd": command,
+            "duty": duty,
+        }
 
     def stop(self):
         self.set_command(0, 0, 0)
