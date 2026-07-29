@@ -87,20 +87,26 @@ class ParkingSystemController:
             self.confirm_frames += 1
             if self.confirm_frames < ULTRASONIC_PHASE_CONFIRM_FRAMES: return
             self.confirm_frames = 0; self._enter(nxt, "sensor")
-            if nxt == "FRONT_HIGH_REAR_LOW_SEEN": command(70, 70, self.motor.steering_angle)
-            elif nxt == "FRONT_LOW_REAR_HIGH_SEEN": command(40, 40, self.motor.steering_angle)
-            else: self.maneuver_active = True; command(100, 100, 0)
+            if nxt == "FRONT_HIGH_REAR_LOW_SEEN":
+                command(PARK_FRONT_HIGH_REAR_LOW_SPEED, PARK_FRONT_HIGH_REAR_LOW_SPEED,
+                        self.motor.steering_angle)
+            elif nxt == "FRONT_LOW_REAR_HIGH_SEEN":
+                command(PARK_FRONT_LOW_REAR_HIGH_SPEED, PARK_FRONT_LOW_REAR_HIGH_SPEED,
+                        self.motor.steering_angle)
+            else:
+                self.maneuver_active = True
+                command(PARK_LEFT_FORWARD_SPEED, PARK_LEFT_FORWARD_SPEED, 0)
             return
         elapsed = now-self.phase_started
         if self.state == "PARK_STOP_SETTLE":
-            command(100,100,0)
-            if elapsed >= .1: self._enter("PARK_LEFT_STEER_PREP")
+            command(PARK_LEFT_FORWARD_SPEED, PARK_LEFT_FORWARD_SPEED, 0)
+            if elapsed >= PARK_STOP_SETTLE_SECONDS: self._enter("PARK_LEFT_STEER_PREP")
         elif self.state == "PARK_LEFT_STEER_PREP":
-            command(100,100,PARK_LEFT_STEER)
+            command(PARK_LEFT_FORWARD_SPEED, PARK_LEFT_FORWARD_SPEED, PARK_LEFT_STEER)
             if self._steer_ready(PARK_LEFT_STEER): self._enter("PARK_LEFT_FORWARD")
             elif elapsed >= PARK_STEER_TIMEOUT_SECONDS: self._safe_stop()
         elif self.state == "PARK_LEFT_FORWARD":
-            command(100,100,PARK_LEFT_STEER)
+            command(PARK_LEFT_FORWARD_SPEED, PARK_LEFT_FORWARD_SPEED, PARK_LEFT_STEER)
             if elapsed >= PARK_LEFT_FORWARD_SECONDS: self._enter("PARK_FORWARD_BRAKE")
         elif self.state == "PARK_FORWARD_BRAKE":
             command(0,0,PARK_LEFT_STEER)
@@ -206,7 +212,7 @@ class ParkingSystemController:
             while not self.stop_requested:
                 self._keys()
                 if not self.running: time.sleep(.01); continue
-                if self.mode == "manual": self._manual(); time.sleep(.005); continue
+                if self.mode == "manual": self._manual(); time.sleep(1 / MANUAL_HZ); continue
                 ok, frame=cap.read()
                 if not ok: raise RuntimeError("Camera frame read failed")
                 center, visual=self._vision(frame); status=self.motor.last_status
