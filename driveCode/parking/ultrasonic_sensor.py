@@ -1,34 +1,16 @@
-from collections import OrderedDict
+from config import (RIGHT_FRONT_SENSOR_OFFSET, RIGHT_REAR_SENSOR_OFFSET,
+                    ULTRASONIC_CLOCK_HZ, ULTRASONIC_FAR_DISTANCE_CM,
+                    ULTRASONIC_INVALID_DISTANCE_CM, ULTRASONIC_MAX_DISTANCE_CM)
 
-from config import SENSOR_LABELS, SENSOR_REGISTER_OFFSETS
 
+class UltrasonicSensorPair:
+    def __init__(self, mmio): self.mmio = mmio
 
-class UltrasonicSensorArray:
-    """MMIO-backed 5-channel ultrasonic sensor reader."""
+    def read_cm(self, offset):
+        ticks = int(self.mmio.read(offset))
+        if ticks <= 0: return ULTRASONIC_INVALID_DISTANCE_CM
+        distance = ticks * 34300.0 / (2.0 * ULTRASONIC_CLOCK_HZ)
+        return ULTRASONIC_FAR_DISTANCE_CM if distance >= ULTRASONIC_MAX_DISTANCE_CM else distance
 
-    def __init__(self, mmio, labels=None, offsets=None):
-        self.mmio = mmio
-        self.labels = list(labels or SENSOR_LABELS)
-        self.offsets = list(offsets or SENSOR_REGISTER_OFFSETS)
-        if len(self.labels) != len(self.offsets):
-            raise ValueError("Sensor labels and offsets must have the same length")
-
-    def read_raw(self):
-        values = OrderedDict()
-        for label, offset in zip(self.labels, self.offsets):
-            values[label] = int(self.mmio.read(offset))
-        return values
-
-    def read_summary(self):
-        values = self.read_raw()
-        ordered = list(values.values())
-        center = ordered[len(ordered) // 2]
-        left_avg = sum(ordered[:2]) / 2.0
-        right_avg = sum(ordered[-2:]) / 2.0
-        return {
-            "values": values,
-            "center": center,
-            "left_avg": left_avg,
-            "right_avg": right_avg,
-            "minimum": min(ordered),
-        }
+    def read_pair(self):
+        return self.read_cm(RIGHT_FRONT_SENSOR_OFFSET), self.read_cm(RIGHT_REAR_SENSOR_OFFSET)
