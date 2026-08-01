@@ -1,131 +1,77 @@
 import threading
-
 import numpy as np
 import spidev
-
-from config import (
-    PWM_SIZE, STEER_D_FILTER, STEER_DEADZONE, STEER_KD, STEER_KP,
-    STEER_MAX_DUTY, STEER_MIN_DUTY, STEER_TRIM,
-)
+from config import *
 
 
 class MotorController:
-    """Shared vehicle motor mapping with steering PD control."""
-
     def __init__(self, motors):
-        self.motors = motors
-        self.size = PWM_SIZE
-        self.left_speed = 0.0
-        self.right_speed = 0.0
-        self.steering_angle = 0.0
-        self.resistance_most_left = 2338
-        self.resistance_most_right = 1512
-        self._previous_mapped = None
-        self._velocity_ema = 0.0
-        self._lock = threading.Lock()
+        self.motors, self.lock = motors, threading.Lock()
+        self.left_speed = self.right_speed = self.steering_angle = 0.0
+        self.applied_left_speed = self.applied_right_speed = 0.0
+        self.previous_mapped, self.velocity_ema = None, 0.0
+        self.last_status = {"mapped": 0.0, "target": 0.0, "adc": 0, "cmd": "stay", "duty": 0.0}
+        self.spi = spidev.SpiDev(); self.spi.open(0, 0)
+        self.spi.max_speed_hz, self.spi.mode = 20_000_000, 0
+        for motor in motors.values():
+            motor.write(0x00, PWM_SIZE); motor.write(0x04, 0); motor.write(0x08, 0)
 
-        self.spi = spidev.SpiDev()
-        self.spi.open(0, 0)
-        self.spi.max_speed_hz = 20000000
-        self.spi.mode = 0b00
-        self.init_motors()
-
-    def init_motors(self):
-        for motor in self.motors.values():
-            motor.write(0x00, self.size)
-            motor.write(0x04, 0)
-            motor.write(0x08, 0)
-
-    def set_command(self, left_speed, right_speed, steering_angle):
-        with self._lock:
-            self.left_speed = float(np.clip(left_speed, -100, 100))
-            self.right_speed = float(np.clip(right_speed, -100, 100))
-            self.steering_angle = float(np.clip(steering_angle, -20, 20))
-
-    def read_adc(self):
-        response = self.spi.xfer2([0x00, 0x00])
-        return ((response[0] & 0x0F) << 8) | response[1]
+    def set_command(self, left, right, steering, immediate_speed=False):
+        with self.lock:
+            self.left_speed, self.right_speed = float(np.clip(left, -100, 100)), float(np.clip(right, -100, 100))
+            self.steering_angle = float(np.clip(steering, -20, 20))
+            if immediate_speed: self.applied_left_speed, self.applied_right_speed = self.left_speed, self.right_speed
 
     @staticmethod
-    def map_value(value, in_min, in_max, out_min, out_max):
-        if value <= in_min:
-            return out_max
-        if value >= in_max:
-            return out_min
-        return (in_max - value) * (out_max - out_min) / (in_max - in_min) + out_min
+    def _ramp(current, target):
+        target = 0.0 if current * target < 0 else target
+        rate = SPEED_ACCEL_PER_SECOND if abs(target) > abs(current) else SPEED_DECEL_PER_SECOND
+        step, delta = rate / CONTROL_HZ, target-current
+        return target if abs(delta) <= step else current + np.sign(delta)*step
 
-    def _right(self, duty_ratio):
-        duty = int(self.size * np.clip(duty_ratio, 0.0, 1.0))
-        self.motors["motor_4"].write(0x08, 0)
-        self.motors["motor_5"].write(0x04, duty)
-        self.motors["motor_5"].write(0x08, 1)
+    def _drive(self, speed, forward, reverse):
+        duty = int(PWM_SIZE*abs(speed)/100)
+        self.motors[forward].write(0x04, duty); self.motors[reverse].write(0x04, duty)
+        self.motors[reverse].write(0x08, 0 if speed > 0 else 1)
+        self.motors[forward].write(0x08, 1 if speed > 0 else 0)
 
-    def _left(self, duty_ratio):
-        duty = int(self.size * np.clip(duty_ratio, 0.0, 1.0))
-        self.motors["motor_5"].write(0x08, 0)
-        self.motors["motor_4"].write(0x04, duty)
-        self.motors["motor_4"].write(0x08, 1)
-
-    def _stay(self):
+    def _steer_stop(self):
         for name in ("motor_4", "motor_5"):
-            self.motors[name].write(0x08, 0)
-            self.motors[name].write(0x04, 0)
+            self.motors[name].write(0x08, 0); self.motors[name].write(0x04, 0)
 
-    def _pd_duty(self, error, mapped_resistance):
-        raw_velocity = 0.0 if self._previous_mapped is None else mapped_resistance - self._previous_mapped
-        self._previous_mapped = mapped_resistance
-        self._velocity_ema = STEER_D_FILTER * raw_velocity + (1.0 - STEER_D_FILTER) * self._velocity_ema
-        duty = STEER_MIN_DUTY + STEER_KP * abs(error)
-        if error * self._velocity_ema > 0:
-            duty -= STEER_KD * abs(self._velocity_ema)
-        return float(np.clip(duty, STEER_MIN_DUTY, STEER_MAX_DUTY))
-
-    def _set_left_speed(self, speed):
-        duty = int(self.size * abs(speed) / 100.0)
-        self.motors["motor_2"].write(0x04, duty)
-        self.motors["motor_3"].write(0x04, duty)
-        if speed > 0:
-            self.motors["motor_3"].write(0x08, 0)
-            self.motors["motor_2"].write(0x08, 1)
-        else:
-            self.motors["motor_3"].write(0x08, 1)
-            self.motors["motor_2"].write(0x08, 0)
-
-    def _set_right_speed(self, speed):
-        duty = int(self.size * abs(speed) / 100.0)
-        self.motors["motor_1"].write(0x04, duty)
-        self.motors["motor_0"].write(0x04, duty)
-        if speed > 0:
-            self.motors["motor_1"].write(0x08, 0)
-            self.motors["motor_0"].write(0x08, 1)
-        else:
-            self.motors["motor_1"].write(0x08, 1)
-            self.motors["motor_0"].write(0x08, 0)
+    def _steer(self, right, duty):
+        active, inactive = (("motor_5", "motor_4") if right else ("motor_4", "motor_5"))
+        self.motors[inactive].write(0x08, 0)
+        self.motors[active].write(0x04, int(PWM_SIZE*duty)); self.motors[active].write(0x08, 1)
 
     def control_once(self):
-        with self._lock:
-            left_speed, right_speed, steering_angle = self.left_speed, self.right_speed, self.steering_angle
-        mapped = self.map_value(
-            self.read_adc(), self.resistance_most_right, self.resistance_most_left, -20, 20
-        )
-        error = steering_angle + STEER_TRIM - mapped
+        with self.lock:
+            steering = self.steering_angle
+            self.applied_left_speed = self._ramp(self.applied_left_speed, self.left_speed)
+            self.applied_right_speed = self._ramp(self.applied_right_speed, self.right_speed)
+            left, right = self.applied_left_speed, self.applied_right_speed
+        raw = self.spi.xfer2([0, 0]); adc = ((raw[0]&15)<<8)|raw[1]
+        mapped = 20.0 if adc <= 1294 else (-20.0 if adc >= 1883 else (1883-adc)*40/589-20)
+        target, error = steering+STEER_TRIM, steering+STEER_TRIM-mapped
         if abs(error) < STEER_DEADZONE:
-            self._stay()
+            self._steer_stop(); cmd, duty = "stay", 0.0
         else:
-            duty = self._pd_duty(error, mapped)
-            if error < 0:
-                self._left(duty)
-            else:
-                self._right(duty)
-        self._set_left_speed(left_speed)
-        self._set_right_speed(right_speed)
+            velocity = 0.0 if self.previous_mapped is None else mapped-self.previous_mapped
+            self.velocity_ema = STEER_D_FILTER*velocity+(1-STEER_D_FILTER)*self.velocity_ema
+            duty = STEER_MIN_DUTY+STEER_KP*abs(error)
+            if error*self.velocity_ema > 0: duty -= STEER_KD*abs(self.velocity_ema)
+            duty = float(np.clip(duty, STEER_MIN_DUTY, STEER_MAX_DUTY)); cmd = "right" if error > 0 else "left"
+            self._steer(error > 0, duty)
+        self.previous_mapped = mapped
+        self._drive(left, "motor_2", "motor_3"); self._drive(right, "motor_0", "motor_1")
+        self.last_status = {"mapped": mapped, "target": target, "adc": adc, "cmd": cmd, "duty": duty}
 
-    def stop(self):
-        self.set_command(0, 0, 0)
-        self._stay()
-        self._set_left_speed(0)
-        self._set_right_speed(0)
+    def drive_stopped(self): return abs(self.applied_left_speed) < 1 and abs(self.applied_right_speed) < 1
 
-    def close(self):
-        self.stop()
-        self.spi.close()
+    def emergency_stop(self):
+        with self.lock:
+            self.left_speed = self.right_speed = self.steering_angle = 0.0
+            self.applied_left_speed = self.applied_right_speed = 0.0
+        self._drive(0, "motor_2", "motor_3"); self._drive(0, "motor_0", "motor_1"); self._steer_stop()
+
+    def close(self): self.emergency_stop(); self.spi.close()

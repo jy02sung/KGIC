@@ -1,0 +1,205 @@
+{
+  "final_state": "EXIT_STRAIGHT_OUT",
+  "duration_seconds": 24.393,
+  "saved_at": "2026-07-28T12:55:32",
+  "records": [
+    {
+      "time": 974.874702847,
+      "state": "WAIT_FRONT_HIGH_REAR_LOW",
+      "kind": "space_start",
+      "front_cm": 999.0,
+      "rear_cm": 149.936276,
+      "left_speed": 0.0,
+      "right_speed": 0.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 0.0
+    },
+    {
+      "time": 977.965550626,
+      "state": "FRONT_HIGH_REAR_LOW_SEEN",
+      "kind": "sensor",
+      "front_cm": 114.232034,
+      "rear_cm": 999.0,
+      "left_speed": 90.0,
+      "right_speed": 90.0,
+      "steer_target": -13.125,
+      "elapsed_seconds": 3.091
+    },
+    {
+      "time": 981.011798896,
+      "state": "FRONT_LOW_REAR_HIGH_SEEN",
+      "kind": "sensor",
+      "front_cm": 999.0,
+      "rear_cm": 97.994757,
+      "left_speed": 70.0,
+      "right_speed": 70.0,
+      "steer_target": -10.3125,
+      "elapsed_seconds": 6.137
+    },
+    {
+      "time": 982.804652983,
+      "state": "PARK_STOP_SETTLE",
+      "kind": "sensor",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 40.0,
+      "right_speed": 40.0,
+      "steer_target": -8.4375,
+      "elapsed_seconds": 7.93
+    },
+    {
+      "time": 982.910985649,
+      "state": "PARK_LEFT_STEER_PREP",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 100.0,
+      "right_speed": 100.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 8.036
+    },
+    {
+      "time": 983.175406619,
+      "state": "PARK_LEFT_FORWARD",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 100.0,
+      "right_speed": 100.0,
+      "steer_target": -20.0,
+      "elapsed_seconds": 8.301
+    },
+    {
+      "time": 984.67900631,
+      "state": "PARK_FORWARD_BRAKE",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 100.0,
+      "right_speed": 100.0,
+      "steer_target": -20.0,
+      "elapsed_seconds": 9.804
+    },
+    {
+      "time": 986.511836145,
+      "state": "PARK_PRE_REVERSE_STRAIGHT_STEER",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 0.0,
+      "right_speed": 0.0,
+      "steer_target": -20.0,
+      "elapsed_seconds": 11.637
+    },
+    {
+      "time": 986.775366693,
+      "state": "PARK_PRE_RIGHT_STRAIGHT_REVERSE",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 0.0,
+      "right_speed": 0.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 11.901
+    },
+    {
+      "time": 988.280389171,
+      "state": "PARK_RIGHT_STEER_PREP",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": -100.0,
+      "right_speed": -100.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 13.406
+    },
+    {
+      "time": 988.4976847,
+      "state": "PARK_RIGHT_REVERSE",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": -100.0,
+      "right_speed": -100.0,
+      "steer_target": 19.0,
+      "elapsed_seconds": 13.623
+    },
+    {
+      "time": 990.902238634,
+      "state": "PARK_FINAL_STRAIGHT_STEER_PREP",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": -100.0,
+      "right_speed": -100.0,
+      "steer_target": 19.0,
+      "elapsed_seconds": 16.028
+    },
+    {
+      "time": 991.172719836,
+      "state": "PARK_FINAL_STRAIGHT_REVERSE",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": -100.0,
+      "right_speed": -100.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 16.298
+    },
+    {
+      "time": 991.185641343,
+      "state": "PARK_HOLD",
+      "kind": "maneuver",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": -100.0,
+      "right_speed": -100.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 16.311
+    },
+    {
+      "time": 995.292960218,
+      "state": "EXIT_STRAIGHT_FORWARD",
+      "kind": "exit",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 100.0,
+      "right_speed": 100.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 20.418
+    },
+    {
+      "time": 996.299059055,
+      "state": "EXIT_RIGHT_STEER_PREP",
+      "kind": "exit",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 100.0,
+      "right_speed": 100.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 21.424
+    },
+    {
+      "time": 996.564181811,
+      "state": "EXIT_RIGHT_FORWARD",
+      "kind": "exit",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 100.0,
+      "right_speed": 100.0,
+      "steer_target": 20.0,
+      "elapsed_seconds": 21.69
+    },
+    {
+      "time": 999.267048004,
+      "state": "EXIT_STRAIGHT_OUT",
+      "kind": "exit",
+      "front_cm": 999.0,
+      "rear_cm": 999.0,
+      "left_speed": 100.0,
+      "right_speed": 100.0,
+      "steer_target": 0.0,
+      "elapsed_seconds": 24.392
+    }
+  ]
+}
